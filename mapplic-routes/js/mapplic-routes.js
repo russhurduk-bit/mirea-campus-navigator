@@ -92,8 +92,12 @@ jQuery(document).ready(function($) {
 			if (autoRouteAttempts++ < 40) window.setTimeout(tryAutoRoute, 150);
 			return;
 		}
-		wayfinding.setLoc(from, wayfinding.fromselect);
-		wayfinding.setLoc(to, wayfinding.toselect);
+		// The official schedule token is the user-facing source of truth.
+		// Original map labels are from 2022–2023 and may use legacy spelling.
+		var fromDisplay = $.extend({}, from, { title: routeLabel(fromToken, from) });
+		var toDisplay = $.extend({}, to, { title: routeLabel(toToken, to) });
+		wayfinding.setLoc(fromDisplay, wayfinding.fromselect);
+		wayfinding.setLoc(toDisplay, wayfinding.toselect);
 		wayfinding.showPanel(wayfinding);
 		if (wayfinding.showPath(fromPointId, toPointId) === false) {
 			setRouteSummary(routeLabel(fromToken, from), routeLabel(toToken, to), 'Между этими точками нет маршрута на карте.', true);
