@@ -1,16 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-	<!-- Meta -->
 	<meta charset="utf-8">
-	<title>Mapplic - Custom Interactive Map Plugin - Mall Example</title>
+	<title>Навигатор РТУ МИРЭА · В-78</title>
 
 	<!-- Viewport for Responsivity -->
 	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
-	<meta name="description" content="Map of a shopping mall, an example of using Mapplic, a premium custom interactive map plugin to display custom image or vector (SVG) maps. Touchscreen kiosk map compatible.">
+	<meta name="description" content="Маршруты между аудиториями главного корпуса РТУ МИРЭА на проспекте Вернадского, 78">
+	<meta name="theme-color" content="#102a43">
 
 	<!-- Stylesheets -->
-	<link href='http://fonts.googleapis.com/css?family=Maven+Pro:400,700' rel='stylesheet' type='text/css'>
 	<link rel="stylesheet" type="text/css" href="css/style.css">
 	<link rel="stylesheet" type="text/css" href="css/map.css">
 	<link rel="stylesheet" type="text/css" href="mapplic/mapplic.css">
@@ -23,15 +22,30 @@
 		</head>
 		<body>
 			<div id="wrap">
-
-				<!-- Site header -->
 				<header id="header">
+					<div class="brand-mark" aria-hidden="true">М</div>
+					<div>
+						<p class="eyebrow">РТУ МИРЭА · В-78</p>
+						<h1>Маршрут по корпусу</h1>
+					</div>
 				</header>
+				<section id="route-summary" class="route-summary" aria-live="polite">
+					<div class="route-point">
+						<span>Откуда</span>
+						<strong id="route-from">Выбери точку на карте</strong>
+					</div>
+					<div class="route-arrow" aria-hidden="true">→</div>
+					<div class="route-point">
+						<span>Куда</span>
+						<strong id="route-to">Выбери точку на карте</strong>
+					</div>
+					<p id="route-status" class="route-status">Укажи начало и конец маршрута</p>
+				</section>
 
 				<!-- Site content -->
 				<div id="content">
 					
-					<section id="map-section" class="inner over">
+					<section id="map-section" class="inner">
 						<div class="editor-window">
 							<div class="window-mockup brown"></div>
 							<div class="editor-body">
@@ -39,15 +53,17 @@
 					</div>
 
 					<!-- Map -->
-					<div class="map-container">
-						<div class="window-mockup">
-							<div class="window-bar"></div>
+						<div class="map-container">
+							<div id="mapplic" class="mapplic-routes"></div>
 						</div>
-						<div id="mapplic" class="mapplic-routes"></div>
-					</div>
 
 				</section>
 			</div>
+			<footer>
+				Планы и маршрутный граф — студенческий проект
+				<a href="https://github.com/KashCodeOriginal/MireaMap">MireaMap</a>.
+				Обозначения аудиторий сверяются с официальным расписанием.
+			</footer>
 		</div>
 
 		<!-- Scripts -->
@@ -60,12 +76,12 @@
 
 <script type="text/javascript">
 			$(document).ready(function() {
-				var mapplic = $('#mapplic').mapplic({
+				$('#mapplic').mapplic({
 					source: 'mall-routes.json',
 					height: 650,
 					sidebar: true,
 					thumbholder: true,
-					maxscale: 3,
+					maxscale: 4,
 					routes: {
 						accessible: true,
 						opened: true,

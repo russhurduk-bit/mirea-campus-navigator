@@ -3,10 +3,109 @@ jQuery(document).ready(function($) {
 	var map = $('.mapplic-routes'),
 		self = map.data('mapplic'),
 		wayfinding = null;
+	var autoRouteAttempts = 0;
+	var specialLocations = {
+		'FOYER': 'Enter',
+		'EXIT': 'Enter',
+		'MAINCANTEEN': 'EatingRoomMain',
+		'ENTRANCECANTEEN': 'EatingRoomEnter',
+		'RIGHTBUFFET': 'EatingShopEnterRight',
+		'LEFTBUFFET': 'EatingShopEnterLeft',
+		'B313BUFFET': 'EatingRoomBcac',
+		'V313BUFFET': 'EatingRoomCcac',
+		'G309BUFFET': 'EatingRoomGcki'
+	};
+
+	function normalizeLocation(value) {
+		return (value || '')
+			.toUpperCase()
+			.replace(/\(В[–—\- ]?78\)/g, '')
+			.replace(/КАБИНЕТ|АУДИТОРИЯ|№/g, '')
+			.replace(/[^А-ЯЁA-Z0-9.]/g, '')
+			.replace(/^ИВЦ/, 'ИВЦ');
+	}
+
+	function resolveLocation(token) {
+		if (!token || !self || !self.l) return null;
+		var normalized = normalizeLocation(token).replace(/^@/, '');
+		var specialId = specialLocations[normalized];
+		if (specialId && self.l[specialId]) return self.l[specialId];
+		if (self.l[token]) return self.l[token];
+		var ids = Object.keys(self.l);
+		for (var i = 0; i < ids.length; i++) {
+			var location = self.l[ids[i]];
+			var aliases = [location.id, location.title, location.thumbnail];
+			for (var j = 0; j < aliases.length; j++) {
+				if (normalizeLocation(aliases[j]) === normalized) return location;
+			}
+		}
+		return null;
+	}
+
+	function routeLabel(token, location) {
+		var labels = {
+			'FOYER': 'Фойе главного корпуса',
+			'EXIT': 'Главный выход',
+			'MAINCANTEEN': 'Главная столовая',
+			'ENTRANCECANTEEN': 'Столовая у главного входа',
+			'RIGHTBUFFET': 'Буфет у главного входа · справа',
+			'LEFTBUFFET': 'Буфет у главного входа · слева',
+			'B313BUFFET': 'Буфет у Б-313',
+			'V313BUFFET': 'Буфет у В-313',
+			'G309BUFFET': 'Буфет у Г-309'
+		};
+		var normalized = normalizeLocation(token).replace(/^@/, '');
+		if (labels[normalized]) return labels[normalized];
+		var room = (token || location.title || '').replace(/\s*\(В[–—\- ]?78\)\s*/i, '').trim();
+		return room || location.title;
+	}
+
+	function setRouteSummary(fromLabel, toLabel, status, error) {
+		$('#route-from').text(fromLabel || 'Выбери точку на карте');
+		$('#route-to').text(toLabel || 'Выбери точку на карте');
+		$('#route-status').text(status || 'Укажи начало и конец маршрута').toggleClass('is-error', !!error);
+	}
+
+	function tryAutoRoute() {
+		var params = new URLSearchParams(window.location.search);
+		var fromToken = params.get('from');
+		var toToken = params.get('to');
+		if (!fromToken || !toToken || !wayfinding || !self) return;
+		var from = resolveLocation(fromToken);
+		var to = resolveLocation(toToken);
+		if (!from || !to) {
+			if (autoRouteAttempts++ < 40) {
+				window.setTimeout(tryAutoRoute, 150);
+				return;
+			}
+			setRouteSummary(
+				from ? routeLabel(fromToken, from) : fromToken,
+				to ? routeLabel(toToken, to) : toToken,
+				'Точка не найдена на карте. Выбери её вручную через поиск.',
+				true
+			);
+			return;
+		}
+		var fromPointId = wayfinding.resolvePointId(from.id);
+		var toPointId = wayfinding.resolvePointId(to.id);
+		if (!fromPointId || !toPointId) {
+			if (autoRouteAttempts++ < 40) window.setTimeout(tryAutoRoute, 150);
+			return;
+		}
+		wayfinding.setLoc(from, wayfinding.fromselect);
+		wayfinding.setLoc(to, wayfinding.toselect);
+		wayfinding.showPanel(wayfinding);
+		if (wayfinding.showPath(fromPointId, toPointId) === false) {
+			setRouteSummary(routeLabel(fromToken, from), routeLabel(toToken, to), 'Между этими точками нет маршрута на карте.', true);
+			return;
+		}
+		setRouteSummary(routeLabel(fromToken, from), routeLabel(toToken, to), 'Маршрут построен. Переключай этажи кнопками на карте.');
+	}
 	var buildFloors = function() {
 		wayfinding = new Wayfinding().init();
 		map.on('svgloaded', function(e, svg, id) {
 			wayfinding.build(svg, id);
+			window.setTimeout(tryAutoRoute, 0);
 		});
 	}
 
@@ -24,7 +123,8 @@ jQuery(document).ready(function($) {
 	var childs = [];
 
 	map.on('mapready', function(e, self) {
-		navigator.geolocation.getCurrentPosition(function(pos) 
+		window.setTimeout(tryAutoRoute, 0);
+		navigator.geolocation.getCurrentPosition(function(pos)
 		{
 			var location = self.getLocationData('pos');
 			location.lat = pos.coords.latitude;
@@ -663,6 +763,21 @@ jQuery(document).ready(function($) {
 				console.error('There is no path to location: ' + id);
 				return null;
 			}
+		}
+
+		// A few entries in the original JSON have a trailing "o" that is
+		// absent from the SVG route graph (A-205, A-206, A-208 and others).
+		// Keep the public location IDs intact and only adapt the graph endpoint.
+		this.resolvePointId = function(id) {
+			var candidates = [id];
+			if (/o$/.test(id)) candidates.push(id.slice(0, -1));
+
+			for (var c = 0; c < candidates.length; c++) {
+				for (var i = 0; i < this.waypoints.length; i++) {
+					if (this.waypoints[i].id == ('p-' + candidates[c])) return candidates[c];
+				}
+			}
+			return null;
 		}
 
 		this.linkPoint = function(a, b, val, ndo) {
