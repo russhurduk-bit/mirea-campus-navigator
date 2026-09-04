@@ -313,6 +313,15 @@ footer {
 footer a { color: #334e68; font-weight: 700; }
 
 @media (max-width: 640px) {
+	.mapplic-map {
+		will-change: transform;
+	}
+
+	.mapplic-layer,
+	.mapplic-routes-path {
+		shape-rendering: optimizeSpeed;
+	}
+
 	#header { padding: 16px 18px; }
 	.brand-mark { width: 40px; height: 40px; font-size: 23px; }
 	.route-summary {

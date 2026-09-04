@@ -3,6 +3,7 @@ jQuery(document).ready(function($) {
 	var map = $('.mapplic-routes'),
 		self = map.data('mapplic'),
 		wayfinding = null;
+	var fastMode = window.matchMedia('(max-width: 760px)').matches;
 	var autoRouteAttempts = 0;
 	var specialLocations = {
 		'FOYER': 'Enter',
@@ -128,13 +129,6 @@ jQuery(document).ready(function($) {
 
 	map.on('mapready', function(e, self) {
 		window.setTimeout(tryAutoRoute, 0);
-		navigator.geolocation.getCurrentPosition(function(pos)
-		{
-			var location = self.getLocationData('pos');
-			location.lat = pos.coords.latitude;
-			location.lng = pos.coords.longitude;
-			self.updateLocation('pos');
-		})
 	});
 	map.on('levelswitched', function(e, level) {
 		if(isWayDrawning){
@@ -212,6 +206,9 @@ jQuery(document).ready(function($) {
 	// wayfinding
 	function Wayfinding() {
 		this.waypoints = [];
+		this.pointIndex = Object.create(null);
+		this.endpointIndex = Object.create(null);
+		this.floorConnectorGroups = Object.create(null);
 		this.element = null;
 		this.path = null;
 		this.el = null;
@@ -438,7 +435,8 @@ jQuery(document).ready(function($) {
 		// build graph
 		this.build = function(svg, fid) {
 			var routes = $('[id^=route]', svg),
-				s = this;
+				s = this,
+				firstWaypointIndex = this.waypoints.length;
 
 			this.element = routes;
 			$('> *', routes).each(function() {
@@ -490,21 +488,20 @@ jQuery(document).ready(function($) {
 				}
 			});
 
-			if (routes.length > 0) {
-				for (var i = 0; i < this.waypoints.length; i++) {
-					this.drawCircle(this.waypoints[i], '#b7a6bd');
-
-					// linking floors
-					if (this.waypoints[i].id && (this.waypoints[i].id.indexOf('pf-') == 0)) {
-						var g = this.waypoints[i].id.split('-').slice(0,2).join('-');
-						for (var j = i+1; j < this.waypoints.length; j++) {
-							if (this.waypoints[j].id && this.waypoints[j].id.indexOf(g) == 0) {
-								s.linkPoint(this.waypoints[i], this.waypoints[j], this.o.floordist);
-								s.linkPoint(this.waypoints[j], this.waypoints[i], this.o.floordist);
-							}
-						}
-					}
+			// Link only the newly loaded stairs and lifts. The original code
+			// rescanned the whole graph after every floor and rendered thousands
+			// of debug circles, which made mobile browsers stutter badly.
+			for (var i = firstWaypointIndex; i < this.waypoints.length; i++) {
+				var waypoint = this.waypoints[i];
+				if (!waypoint.id || waypoint.id.indexOf('pf-') !== 0) continue;
+				var group = waypoint.id.split('-').slice(0, 2).join('-');
+				var peers = this.floorConnectorGroups[group] || [];
+				for (var j = 0; j < peers.length; j++) {
+					s.linkPoint(waypoint, peers[j], this.o.floordist);
+					s.linkPoint(peers[j], waypoint, this.o.floordist);
 				}
+				peers.push(waypoint);
+				this.floorConnectorGroups[group] = peers;
 			}
 
 			// auto assign points to location shapes
@@ -526,14 +523,18 @@ jQuery(document).ready(function($) {
 				}
 			});
 
-			for (var i = 0; i < this.waypoints.length; i++) {
-				if (this.waypoints[i].n.length == 1 && !this.waypoints[i].id) {
-					for (var j = 0; j < lp.length; j++) {
-						if (lp[j].x == this.waypoints[i].x && lp[j].y == this.waypoints[i].y) {
-							this.waypoints[i].id = 'p-' + lp[j].id;
-							this.addListIcon(lp[j].id);
-						}
-					}
+			var locationsByPoint = Object.create(null);
+			for (var i = 0; i < lp.length; i++) {
+				locationsByPoint[this.pointKey(lp[i].x, lp[i].y)] = lp[i].id;
+			}
+			for (var i = firstWaypointIndex; i < this.waypoints.length; i++) {
+				var waypoint = this.waypoints[i];
+				if (waypoint.n.length !== 1 || waypoint.id) continue;
+				var locationId = locationsByPoint[this.pointKey(waypoint.x, waypoint.y)];
+				if (locationId) {
+					waypoint.id = 'p-' + locationId;
+					this.indexEndpoint(locationId, i);
+					this.addListIcon(locationId);
 				}
 			}
 
@@ -584,7 +585,7 @@ jQuery(document).ready(function($) {
 				WayDetailsShowing(s.endPoints[1]);
 				FirstTimeCall = true;
 				isWayDrawning = false;
-			}, dist * 10 / this.o.speed + this.timeouts.length * 600); // delay between floors
+			}, fastMode ? 0 : dist * 10 / this.o.speed + this.timeouts.length * 600); // delay between floors
 			this.timeouts.push(t);
 
 
@@ -599,7 +600,7 @@ jQuery(document).ready(function($) {
 				self.switchLevel(fid);
 				var path = s.drawPath(subpath, dist);
 				self.bboxZoom(path);
-			}, dur * 10 / s.o.speed + s.timeouts.length * 600); // delay between floors
+			}, fastMode ? 0 : dur * 10 / s.o.speed + s.timeouts.length * 600); // delay between floors
 			s.timeouts.push(t);
 
 			isWayDrawning = true;
@@ -664,15 +665,16 @@ jQuery(document).ready(function($) {
 				.attr('d', d)
 				.insertAfter(list[0].floor);
 
-			// animation
-			var p = this.path.get(0),
-				length = p.getTotalLength();
-			
-			p.style.strokeDasharray = length + ' ' + length;
-			p.style.strokeDashoffset = length;
-			p.getBoundingClientRect();
-			p.style.transition = p.style.WebkitTransition = 'stroke-dashoffset ' + dist / 100 / this.o.speed + 's ease-in-out 0.4s'; // 400ms delay
-			p.style.strokeDashoffset = '0';
+			// Drawing a long animated SVG path is expensive on mobile GPUs.
+			if (!fastMode) {
+				var p = this.path.get(0),
+					length = p.getTotalLength();
+				p.style.strokeDasharray = length + ' ' + length;
+				p.style.strokeDashoffset = length;
+				p.getBoundingClientRect();
+				p.style.transition = p.style.WebkitTransition = 'stroke-dashoffset ' + dist / 100 / this.o.speed + 's ease-in-out 0.4s'; // 400ms delay
+				p.style.strokeDashoffset = '0';
+			}
 			//debugger;
 
 			return this.path;
@@ -691,45 +693,35 @@ jQuery(document).ready(function($) {
 				this.waypoints[i].prev = undefined;
 			}
 
-			// dijkstra
-			for (var i = 0; i < a.length; i++) this.waypoints[a[i]].dist = 0;
-			var q = this.waypoints.slice();
+			// Binary-heap Dijkstra avoids the original O(V²) full graph scan.
+			var heap = [], target = null, path = [], targets = Object.create(null);
+			for (var i = 0; i < b.length; i++) targets[b[i]] = true;
+			for (var i = 0; i < a.length; i++) {
+				this.waypoints[a[i]].dist = 0;
+				this.heapPush(heap, { index: a[i], dist: 0 });
+			}
 
-			while (q.length > 0) {
-				var min = Number.POSITIVE_INFINITY,
-					u = 0;
-				for (var i = 0; i < q.length; i++) {
-					if (q[i].dist < min) {
-						u = i;
-						min = q[i].dist;
-					}
+			while (heap.length) {
+				var current = this.heapPop(heap), p = this.waypoints[current.index];
+				if (current.dist !== p.dist) continue;
+				if (targets[current.index]) {
+					target = p;
+					break;
 				}
-				var p = q[u];
-				q.splice(u, 1);
 				for (var i = 0; i < p.n.length; i++) {
-					if (!this.o.disability || !p.n[i].ndo) {
-						var alt = p.dist + p.n[i].val;
-						if (alt < p.n[i].to.dist) {
-							p.n[i].to.dist = alt;
-							p.n[i].to.prev = p;
-						}
+					var edge = p.n[i];
+					if (this.o.disability && edge.ndo) continue;
+					var alt = p.dist + edge.val;
+					if (alt < edge.to.dist) {
+						edge.to.dist = alt;
+						edge.to.prev = p;
+						this.heapPush(heap, { index: edge.to.index, dist: alt });
 					}
 				}
 			}
-
-			var min = Number.POSITIVE_INFINITY,
-				target = null,
-				path = [];
-
-			for (var i = 0; i < b.length; i++) {
-				if (this.waypoints[b[i]].dist < min) {
-					target = this.waypoints[b[i]];
-					min = target.dist;
-				}
-			}
-			path.push(target);
 
 			if (!target) return false;
+			path.push(target);
 
 			while (target.prev !== undefined) {
 				target = target.prev;
@@ -738,18 +730,51 @@ jQuery(document).ready(function($) {
 			return path;
 		}
 
+		this.heapPush = function(heap, entry) {
+			heap.push(entry);
+			var index = heap.length - 1;
+			while (index > 0) {
+				var parent = Math.floor((index - 1) / 2);
+				if (heap[parent].dist <= entry.dist) break;
+				heap[index] = heap[parent];
+				index = parent;
+			}
+			heap[index] = entry;
+		}
+
+		this.heapPop = function(heap) {
+			var first = heap[0], last = heap.pop();
+			if (heap.length && last) {
+				var index = 0;
+				while (true) {
+					var left = index * 2 + 1, right = left + 1;
+					if (left >= heap.length) break;
+					var child = right < heap.length && heap[right].dist < heap[left].dist ? right : left;
+					if (heap[child].dist >= last.dist) break;
+					heap[index] = heap[child];
+					index = child;
+				}
+				heap[index] = last;
+			}
+			return first;
+		}
+
 		this.addPoint = function(x, y, id, floor, fid) {
-			var point = this.pointExists(this.waypoints, x, y);
+			var key = this.pointKey(x, y),
+				point = this.pointIndex[key];
 			if (!point) {
-				this.waypoints.push({
+				point = {
 					id: id,
+					index: this.waypoints.length,
 					x: x,
 					y: y,
 					floor: floor,
 					fid: fid,
 					n: []
-				});
-				point = this.waypoints[this.waypoints.length - 1];
+				};
+				this.waypoints.push(point);
+				this.pointIndex[key] = point;
+				if (id && id.indexOf('p-') === 0) this.indexEndpoint(id.slice(2), point.index);
 			
 				// list button
 				if (id) this.addListIcon(id.replace('p-', ''));
@@ -759,10 +784,8 @@ jQuery(document).ready(function($) {
 		}
 
 		this.getPoints = function(id) {
-			var p = [];
-			for (var i = 0; i < this.waypoints.length; i++) if (this.waypoints[i].id == ('p-' + id)) p.push(i);
-
-			if (p.length > 0) return p;
+			var p = this.endpointIndex[id];
+			if (p && p.length > 0) return p;
 			else {
 				console.error('There is no path to location: ' + id);
 				return null;
@@ -776,12 +799,18 @@ jQuery(document).ready(function($) {
 			var candidates = [id];
 			if (/o$/.test(id)) candidates.push(id.slice(0, -1));
 
-			for (var c = 0; c < candidates.length; c++) {
-				for (var i = 0; i < this.waypoints.length; i++) {
-					if (this.waypoints[i].id == ('p-' + candidates[c])) return candidates[c];
-				}
-			}
+			for (var c = 0; c < candidates.length; c++)
+				if (this.endpointIndex[candidates[c]]) return candidates[c];
 			return null;
+		}
+
+		this.indexEndpoint = function(id, index) {
+			if (!this.endpointIndex[id]) this.endpointIndex[id] = [];
+			if (this.endpointIndex[id].indexOf(index) === -1) this.endpointIndex[id].push(index);
+		}
+
+		this.pointKey = function(x, y) {
+			return parseFloat(x) + '|' + parseFloat(y);
 		}
 
 		this.linkPoint = function(a, b, val, ndo) {
